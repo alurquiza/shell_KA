@@ -46,7 +46,7 @@ int main(){
                 execvp("ls", args);
             }
             else{
-                wait();
+                wait(NULL);
             }
             /* Otra forma de hacer ls
             /media/ubuntu-mate/Universidad/2do Year/2do semestre/Sistema Operativo
