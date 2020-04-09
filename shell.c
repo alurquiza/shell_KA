@@ -8,7 +8,7 @@
 #include <sys/types.h>
 #include <signal.h>
 #include <fcntl.h>
-#define Rojo "\x1b[31m"
+#define Red "\x1b[31m"
 #define Yellow "\x1b[33m"
 #define Blue "\x1b[34m"
 #define Cyan "\x1b[36m"
@@ -145,7 +145,117 @@ void Parse_Line(Parse *line, char *rd){
     }
 }
 
+int Again_Command(Parse *line, char *rd){
+	int num = 0;
+    for(int i = 0; i < line->size_rest; i++)
+        num = num * 10 + (line->rest[i] - '0');
+    FILE *file_h = fopen(path_initial, "r");
+    char *lh = malloc(100);
+    int cant;
+    fscanf(file_h, "%d", &cant);
+    if(cant < num){
+        printf(Red "Command not found\n" RESET);
+        fclose(file_h);
+        return 0;
+    }
+    fgets(lh, 100, file_h);
+    for(int j = 0; j < cant; j++){
+        fgets(lh, 100, file_h);
+        if(j == num - 1){
+            for(int i = 0; i < 100; i++)
+                rd[i] = lh[i];
+            break;
+        }
+    }
+    fclose(file_h);
+    Parse_Line(&(*line), rd);
+   	return 1;
+}
+
+void execute_command(Commands *command){
+	pid_t pid = fork();
+    if(pid == 0){
+        if(command->mod1 == 1){
+            int fd = creat(command->output, 0644);
+            dup2(fd, STDOUT_FILENO);
+            close(fd);
+        }
+        if(command->mod2 == 1){
+            int fd = open(command->output, O_CREAT | O_WRONLY | O_APPEND, 777);
+            dup2(fd, STDOUT_FILENO);
+            close(fd);
+        }
+        if(command->mod3 == 1){
+            int fd = open(command->input, O_RDONLY);
+            dup2(fd, STDIN_FILENO);
+            close(fd);
+        }
+        int cap = execvp(command->args[0], command->args);
+        if(cap < 0) printf(Red "Error to execute \'%s\'\n" RESET, command->args[0]);
+        exit(0);
+    }
+    else{
+        wait(NULL);
+    }
+}
+
+void Parse_For_Pipes(Commands *array_comm, Parse *line){
+	int count_comm = -1;
+    char **tokens = malloc(100);
+    int count_tokens = 0;
+    char *cad_aux = malloc(100);
+    int cnt = 0;
+    int comillas = 0;
+    tokens[0] = line->command;
+    count_tokens++;
+    for(int i = 0; i < line->size_rest; i++){
+        if(line->rest[i] == '|' && comillas == 0){
+        	if(cnt > 0){
+	        	tokens[count_tokens] = cad_aux;
+	            count_tokens++;
+	            cnt = 0;
+	            cad_aux = malloc(100);
+        	}
+            count_comm++;
+            tokens[count_tokens] = NULL;
+            initial_Commands(&array_comm[count_comm]);
+            Parse_to_command(tokens, count_tokens, &array_comm[count_comm]);
+        }
+        if(line->rest[i] == ' ' && comillas == 0){
+            if(cnt){
+                tokens[count_tokens] = cad_aux;
+                count_tokens++;
+                cnt = 0;
+                cad_aux = malloc(100);
+            }
+            continue;
+        }
+        if(line->rest[i] == '"'){
+            if(comillas == 1){
+                tokens[count_tokens] = cad_aux;
+                count_tokens++;
+                cnt = 0;
+                cad_aux = malloc(100);
+                comillas = 0;
+            }
+            else comillas = 1;
+            continue;                
+        }
+        cad_aux[cnt] = line->rest[i];
+        cnt++;           
+    }
+    if(cnt){
+        tokens[count_tokens] = cad_aux;
+        count_tokens++;
+        cnt = 0;
+    }
+    count_comm++;
+    initial_Commands(&array_comm[count_comm]);
+    Parse_to_command(tokens, count_tokens, &array_comm[count_comm]);
+}
+
 int main(){
+	//Para crear el archivo file_h en caso de que no exista que va a contener el historial
     path_initial = malloc(100);
     getcwd(path_initial, 100);
     char *aux_s = "/file_h";
@@ -166,28 +276,8 @@ int main(){
         Parse line;
         Parse_Line(&line, rd);
         if(strcmp(line.command, "again") == 0){
-            int num = 0;
-            for(int i = 0; i < line.size_rest; i++)
-                num = num * 10 + (line.rest[i] - '0');
-            FILE *file_h = fopen(path_initial, "r");
-            char *lh = malloc(100);
-            int cant;
-            fscanf(file_h, "%d", &cant);
-            if(cant < num){
-                printf("Command not found\n");
-                continue;
-            }
-            fgets(lh, 100, file_h);
-            for(int j = 0; j < cant; j++){
-                fgets(lh, 100, file_h);
-                if(j == num - 1){
-                    for(int i = 0; i < 100; i++)
-                        rd[i] = lh[i];
-                    break;
-                }
-            }
-            fclose(file_h);
-            Parse_Line(&line, rd);
+            int proof = Again_Command(&line, rd);
+           	if(proof == 0) continue;
         }
         int spaces_ = 0;
         while(spaces_ < 100 && rd[spaces_] == ' ')
@@ -206,82 +296,13 @@ int main(){
         }
         if(strcmp(line.command, "exit") == 0)
             return 0;
-        //Captar la entrada luego de separar en comando y rest que deberian ser los parametros y obviando lo que este despues de '#'
-        int count_comm = -1;
-        Commands array_comm[100]; // Array de diferentes comandos
-        char **tokens = malloc(100);
-        int count_tokens = 0;
-        char *cad_aux = malloc(100);
-        int cnt = 0;
-        int comillas = 0;
-        tokens[0] = line.command;
-        count_tokens++;
-        for(int i = 0; i < line.size_rest; i++){
-            if(line.rest[i] == '|' && comillas == 0){
-                count_comm++;
-                tokens[count_tokens] = NULL;
-                initial_Commands(&array_comm[count_comm]);
-                Parse_to_command(tokens, count_tokens, &array_comm[count_comm]);
-            }
-            if(line.rest[i] == ' ' && comillas == 0){
-                if(cnt){
-                    tokens[count_tokens] = cad_aux;
-                    count_tokens++;
-                    cnt = 0;
-                    cad_aux = malloc(100);
-                }
-                continue;
-            }
-            if(line.rest[i] == '"'){
-                if(comillas == 1){
-                    tokens[count_tokens] = cad_aux;
-                    count_tokens++;
-                    cnt = 0;
-                    cad_aux = malloc(100);
-                    comillas = 0;
-                }
-                else comillas = 1;
-                continue;                
-            }
-            cad_aux[cnt] = line.rest[i];
-            cnt++;           
-        }
-        if(cnt){
-            tokens[count_tokens] = cad_aux;
-            count_tokens++;
-            cnt = 0;
-        }
-        count_comm++;
-        initial_Commands(&array_comm[count_comm]);
-        Parse_to_command(tokens, count_tokens, &array_comm[count_comm]);
+       	Commands *array_comm = malloc(100);
+       	Parse_For_Pipes(array_comm, &line);
         if(strcmp(line.command, "cd") == 0){
             chdir(array_comm[0].args[1]);
         }
         else{
-            pid_t pid = fork();
-            if(pid == 0){
-                if(array_comm[0].mod1 == 1){
-                    int fd = creat(array_comm[0].output, 0644);
-                    dup2(fd, STDOUT_FILENO);
-                    close(fd);
-                }
-                if(array_comm[0].mod2 == 1){
-                    int fd = open(array_comm[0].output, O_CREAT | O_WRONLY | O_APPEND, 777);
-                    dup2(fd, STDOUT_FILENO);
-                    close(fd);
-                }
-                if(array_comm[0].mod3 == 1){
-                    int fd = open(array_comm[0].input, O_RDONLY);
-                    dup2(fd, STDIN_FILENO);
-                    close(fd);
-                }
-                int cap = execvp(array_comm[0].args[0], array_comm[0].args);
-                if(cap < 0) printf(Rojo "Error to execute \'%s\'\n" RESET, line.command);
-                return 0;
-            }
-            else{
-                wait(NULL);
-            }
+           	execute_command(&array_comm[0]);
         }
         
     }
